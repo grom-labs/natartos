@@ -1,0 +1,31 @@
+name: Experimental boot activation
+
+on:
+  push:
+    branches: ['codex/**']
+    paths: ['src/boot_activate/**', 'src/boot_probe/**', 'src/natartos_loader.c', 'tests/boot_activate/**', 'tools/boot_activate/**', 'tools/boot_probe/build.py', '.github/workflows/boot-activation.yml']
+  pull_request:
+    branches: [master]
+    paths: ['src/boot_activate/**', 'src/boot_probe/**', 'src/natartos_loader.c', 'tests/boot_activate/**', 'tools/boot_activate/**', 'tools/boot_probe/build.py', '.github/workflows/boot-activation.yml']
+
+permissions:
+  contents: read
+
+jobs:
+  cross-build-and-audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      matrix:
+        arch: [aarch64, x86_64]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install checksum-pinned Zig 0.15.2
+        shell: bash
+        run: |
+          curl --fail --location --retry 3 https://ziglang.org/download/0.15.2/zig-x86_64-linux-0.15.2.tar.xz --output "$RUNNER_TEMP/zig.tar.xz"
+          echo "02aa270f183da276e5b5920b1dac44a63f1a49e55050ebde3aecc9eb82f93239  $RUNNER_TEMP/zig.tar.xz" | sha256sum --check
+          tar -xJf "$RUNNER_TEMP/zig.tar.xz" -C "$RUNNER_TEMP"
+          echo "$RUNNER_TEMP/zig-x86_64-linux-0.15.2" >> "$GITHUB_PATH"
+      - name: Cross-build helpers, fixtures and ELF audits
+        run: python3 tools/boot_activate/build.py --zig "$(command -v zig)" --arch "${{ matrix.arch }}"

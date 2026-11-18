@@ -4,7 +4,7 @@ LDFLAGS = -Wl,-soname,natartos_loader.so
 
 all: natartos_loader.so
 
-natartos_loader.so: natartos_loader.c
+natartos_loader.so: natartos_loader.c boot_activate/loader_health.h boot_activate/health.h boot_probe/raw_syscall.h
 	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ $<
 	@echo "[natartos] Built $@ ($$(stat -c%s $@) bytes)"
 

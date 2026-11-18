@@ -16,3 +16,8 @@ reviews/
 DESIGN.md
 MANIFEST.md
 TODO.md
+
+# Local toolchains and isolated experimental builds
+.local-tools/
+build/
+__pycache__/

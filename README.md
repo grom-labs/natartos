@@ -10,6 +10,14 @@ A per-session mod framework for your goggles, built on top of
 > mods (`toolya natartos start`). Reboot persistence is on the
 > [roadmap](#roadmap). See [If you bricked it](#if-you-bricked-it) for why.
 
+The separate [experimental boot marker probe](docs/BOOT_MARKER_PROBE.md) is
+bench research only; it does not implement automatic mod startup. The optional
+[boot activation prototype](docs/BOOT_ACTIVATION.md) adds guarded automatic
+startup and stock-GUI fallback. It has passed a retail build 35808 bench,
+including owner-confirmed unplugged startup and SD Hello launch. It is outside
+the release installer, requires a separately qualified exact-build profile,
+and is disabled in the default loader build.
+
 ## What it does
 
 natartos installs a native loader (`LD_PRELOAD`) and opt-in mods into
