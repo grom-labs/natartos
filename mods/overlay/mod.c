@@ -28,6 +28,8 @@
 #define __NR_mmap       222
 #define __NR_ftruncate   46
 #define __NR_pread64     67
+#define __NR_pwrite64    68
+#define __NR_flock       32
 #define __NR_munmap     215
 #define MS_INVALIDATE   2
 #define __NR_msync      227
@@ -59,6 +61,26 @@ static long sys_pread64(int fd, void *buf, long count, long offset) {
     __asm__ volatile("svc 0" : "+r"(x0) : "r"(x1), "r"(x2), "r"(x3), "r"(x8) : "memory");
     return x0;
 }
+
+static long sys_pwrite64(int fd, const void *buf, long count, long offset) {
+    register long x0 __asm__("x0") = fd;
+    register long x1 __asm__("x1") = (long)buf;
+    register long x2 __asm__("x2") = count;
+    register long x3 __asm__("x3") = offset;
+    register long x8 __asm__("x8") = __NR_pwrite64;
+    __asm__ volatile("svc 0" : "+r"(x0) : "r"(x1), "r"(x2), "r"(x3), "r"(x8) : "memory");
+    return x0;
+}
+
+static long sys_flock(int fd, int operation) {
+    register long x0 __asm__("x0") = fd;
+    register long x1 __asm__("x1") = operation;
+    register long x8 __asm__("x8") = __NR_flock;
+    __asm__ volatile("svc 0" : "+r"(x0) : "r"(x1), "r"(x8) : "memory");
+    return x0;
+}
+
+#include "sd_display.h"
 
 static void *sys_mmap(void *addr, long len, int prot, int flags, int fd, long offset) {
     register long x0 __asm__("x0") = (long)addr;
@@ -410,6 +432,8 @@ static int g_inject_fd = -1;
 static volatile unsigned int g_inject_last_counter = 0;
 static volatile int g_inject_active = 0;
 static volatile int g_inject_frames = 0;
+static volatile int g_cleanup_active = 0;
+static nat_overlay_session g_sd_session = {-1, -1, 0};
 
 /* experiment instrumentation (used by cleanup + hook) */
 static volatile int g_exited_once = 0;
@@ -417,7 +441,7 @@ static volatile int g_post_exit_pushes = 0;
 
 static int g_push_count = 0;
 
-static void start_inject_thread(void);
+static int start_inject_thread(void);
 
 /* Write one key press+release (with SYN reports) to /dev/input/event0. */
 static void emit_key(int fd, unsigned short code) {
@@ -470,7 +494,9 @@ static int inject_ui_repaint(void) {
 
 static void overlay_cleanup(void) {
     NTLOG("cleanup: stopping overlay");
+    __atomic_store_n(&g_cleanup_active, 1, __ATOMIC_RELEASE);
     g_inject_active = 0;
+    nat_overlay_ack(&g_sd_session, g_inject_fd, 0);
     if (g_inject_fd >= 0) { sys_close(g_inject_fd); g_inject_fd = -1; }
     g_inject_last_counter = 0;   /* reset so the next launch starts clean */
 
@@ -483,7 +509,12 @@ static void overlay_cleanup(void) {
     typedef int (*system_fn)(const char *);
     system_fn sys_fn = g_dlsym ? (system_fn)g_dlsym(RTLD_DEFAULT, "system") : 0;
 
-    if (!sys_fn) { NTLOG("cleanup: no system()"); return; }
+    if (!sys_fn) {
+        NTLOG("cleanup: no system()");
+        nat_overlay_detach(&g_sd_session);
+        __atomic_store_n(&g_cleanup_active, 0, __ATOMIC_RELEASE);
+        return;
+    }
 
     /* Kill the app and BLOCK until it is really gone: the app runs in its own
      * process and holds an EVIOCGRAB on the input device, so until it dies our
@@ -502,7 +533,12 @@ static void overlay_cleanup(void) {
      * exit invalidates nothing, so we synthesize real input on the GUI's own
      * event thread (in-band, thread-safe — unlike the EW cross-thread call that
      * hung): ENTER wakes/opens the menu, BACK returns to a clean home. ~1-2s. */
-    if (inject_ui_repaint()) { NTLOG("cleanup: clean in-process exit OK"); return; }
+    if (inject_ui_repaint()) {
+        NTLOG("cleanup: clean in-process exit OK");
+        nat_overlay_detach(&g_sd_session);
+        __atomic_store_n(&g_cleanup_active, 0, __ATOMIC_RELEASE);
+        return;
+    }
 
     /* Fallback: the poke didn't wake the GUI (input-delivery timing is not 100%
      * reliable). Restart dji_glasses — slower (~10s) but always restores the UI,
@@ -512,6 +548,8 @@ static void overlay_cleanup(void) {
     sys_fn("touch /data/local/tmp/natartos_restart; "
            "(sleep 1; kill $(pidof dji_glasses)) >/dev/null 2>&1 &");
     NTLOG("cleanup: done");
+    /* Keep the cleanup lease until this process exits: a new app must not
+     * attach in the one-second window before the scheduled restart. */
 }
 
 static void *inject_thread_fn(void *arg) {
@@ -519,11 +557,18 @@ static void *inject_thread_fn(void *arg) {
     NTLOG("inject thr: start");
     struct timespec_t ts = { 0, 16666666 };
     int logged_fb = 0;
+    int acknowledged = 0;
 
     while (1) {
         sys_nanosleep(&ts, 0);
         if (!g_inject_active) break;
         if (g_inject_fd < 0) continue;
+
+        if (!nat_overlay_owner_alive(&g_sd_session)) {
+            NTLOG("inject thr: SD runner exited");
+            overlay_cleanup();
+            break;
+        }
 
         /* Stop promptly — checked every frame, so exit latency is <100ms:
          *   fb_stop present  → explicit stop (web / BACK button / SIGUSR1)
@@ -544,6 +589,16 @@ static void *inject_thread_fn(void *arg) {
             find_all_framebuffers();
             fbc = g_fb_count;
             if (fbc == 0) continue;
+        }
+
+        /* Do not let the app grab the buttons until the consuming thread is
+         * running and a real display buffer has been found. */
+        if (!acknowledged) {
+            if (nat_overlay_ack(&g_sd_session, g_inject_fd, NAT_DISPLAY_ACK_READY)) {
+                overlay_cleanup();
+                break;
+            }
+            acknowledged = 1;
         }
 
         unsigned int counter = 0;
@@ -574,11 +629,11 @@ static void *inject_thread_fn(void *arg) {
     return 0;
 }
 
-static void start_inject_thread(void) {
+static int start_inject_thread(void) {
     pthread_create_fn pcreate = g_dlsym ? (pthread_create_fn)g_dlsym(RTLD_DEFAULT, "pthread_create") : 0;
-    if (!pcreate) return;
+    if (!pcreate) return -1;
     unsigned long tid;
-    pcreate(&tid, 0, inject_thread_fn, 0);
+    return pcreate(&tid, 0, inject_thread_fn, 0);
 }
 
 /* ---- Watcher thread ---- */
@@ -593,10 +648,13 @@ static void *watcher_thread_fn(void *arg) {
     int logged_no_shm = 0;
     while (1) {
         sys_nanosleep(&ts, 0);
+        if (__atomic_load_n(&g_cleanup_active, __ATOMIC_ACQUIRE)) continue;
         if (g_inject_active) { cooldown = 4; logged_no_shm = 0; continue; }
         if (cooldown > 0) { cooldown--; continue; }
         if (sys_faccessat(AT_FDCWD, OVR, 0) != 0) continue;
-        int fd = (int)sys_openat(AT_FDCWD, SHM, O_RDONLY, 0);
+        int fd = nat_overlay_attach(&g_sd_session, SHM,
+                                    "/data/local/tmp/" NAT_DISPLAY_OWNER,
+                                    "/data/local/tmp/" NAT_DISPLAY_OVERLAY);
         if (fd < 0) { if (!logged_no_shm) { NTLOG("watcher: waiting for fb_shared"); logged_no_shm = 1; } continue; }
         NTLOG("watcher: fb_shared opened, starting inject");
         g_inject_fd = fd;
@@ -604,7 +662,12 @@ static void *watcher_thread_fn(void *arg) {
         if (g_fb_count == 0) find_all_framebuffers();
         g_inject_frames = 0;
         g_inject_last_counter = 0;
-        start_inject_thread();
+        if (start_inject_thread()) {
+            NTLOG("watcher: inject thread failed");
+            g_inject_active = 0;
+            sys_close(g_inject_fd); g_inject_fd = -1;
+            nat_overlay_detach(&g_sd_session);
+        }
     }
     return 0;
 }

@@ -177,9 +177,13 @@ int natartos_mod_register(void *(*dlsym_fn)(void *, const char *)) {
 | `on_action` | callback run on tap (used when `command == NULL`) |
 | `priority` | sort order; lower = higher in the menu |
 
-On tap the loader runs `command` (or calls `on_action`). A toggle just flips its
-flag file, as above. Mirror the same item in `mod.json`'s `menu` block so the
-descriptor matches what the code registers.
+On tap the menu runs `command` (or calls `on_action` when `command` is
+`NULL`). Both run on the UI thread, so anything long-running must background
+itself (`nohup ... &`, as Doom and PC Stream do). A toggle just flips its flag
+file, as above. Registering an existing `id` again updates that entry. Up to
+`NATARTOS_MAX_MENU_ITEMS` (32) entries are shown across all mods. Mirror the
+same item in `mod.json`'s `menu` block so the descriptor matches what the code
+registers.
 
 ## DJI Embedded Wizard menu integration
 

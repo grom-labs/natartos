@@ -29,7 +29,12 @@ PLT-interpose `MxBindableAbstractMenu_Reload`:
 3. Clone 256-byte template from last stock item
 4. Patch: `d[4]=action, d[5]=icon, d[16]=title, d[17]=subtitle, d[18]=type(31)`
 5. `MxBindableAbstractMenu_AddItemFromData(self, item_data)`
-6. `CoreVerticalList_OnSetNoOfItems(self, 0)` + `vmt[58](self)` (Postreload)
+6. `CoreVerticalList_OnSetNoOfItems(self, 0)` + `MxBindableAbstractMenu__Postreload(self)`
+   (EW's virtual dispatcher, resolved with `dlsym`). Do not hard-code the
+   vtable slot: on build 35808 Postreload is slot 60 (`+0x1e0`) and slot 58
+   (`+0x1d0`) is `MxBindableMenu_DoPreFocus(self, view)`, which crashes when
+   called without a view. The stock `MxBindableAbstractMenu_Reload` itself
+   ends with Prereload (`+0x1d8`) … `AddItemFromData` … Postreload (`+0x1e0`).
 
 ## VMT names
 

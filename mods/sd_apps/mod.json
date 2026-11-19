@@ -1,0 +1,13 @@
+{
+  "id": "sd_apps",
+  "name": "SD Apps",
+  "version": "0.1.0",
+  "type": "app",
+  "so": "mod_sd_apps.so",
+  "source": "mod.c",
+  "menu": {
+    "label": "<one entry per app on the SD card>",
+    "action": "launch"
+  },
+  "notes": "Adds a More-menu entry for each app in natartos/apps on the SD card. Needs sd_app_runner; display apps also need the overlay mod."
+}

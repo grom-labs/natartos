@@ -260,7 +260,9 @@ typedef struct {
     int priority;             /* sort order: lower = higher in menu */
 } natartos_menu_entry;
 
-#define NATARTOS_MAX_MENU_ITEMS 8
+/* More-menu entries across all mods (hook_menu keeps one ~1.2 KB slot each).
+ * The More menu is a scrolling list; SD Apps adds one entry per card app. */
+#define NATARTOS_MAX_MENU_ITEMS 32
 
 typedef int (*natartos_menu_register_fn)(const natartos_menu_entry *entry);
 

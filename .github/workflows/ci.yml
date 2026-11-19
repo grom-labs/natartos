@@ -8,6 +8,19 @@ on:
     branches: [master]
 
 jobs:
+  sd-apps-tests:
+    runs-on: ubuntu-latest
+    container:
+      image: gcc:13
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install test tools
+        run: apt-get update -qq && apt-get install -y -qq python3
+      - name: Build host test runner and fixtures
+        run: python3 tools/sd_apps/build.py --host-test --target x86_64-linux-musl
+      - name: Exercise packages, staging and process supervision
+        run: sh tests/sd_apps/test_runner.sh build/host
+
   build:
     runs-on: ubuntu-latest
     container:
@@ -28,7 +41,7 @@ jobs:
           CFLAGS="-shared -fPIC -O2 -fno-builtin -nostdlib"
           # Release builds ship only ready mods — skip untested/experimental/in-progress
           # ones and the dev template (README "Status" column is the source of truth).
-          SKIP_MODS="audio mute input splash template"
+          SKIP_MODS="audio mute input sd_apps splash template"
           for dir in mods/*/; do
             dir=$(basename "$dir")
             [ ! -f "mods/$dir/mod.json" ] && continue
@@ -65,6 +78,15 @@ jobs:
 
       - name: Build dm_noverity
         run: aarch64-linux-gnu-gcc -static -O2 -o dist/dm_noverity tools/dm_noverity.c
+
+      - name: Build standalone SD app development artifacts
+        run: python3 tools/sd_apps/build.py
+
+      - name: Upload SD app bench artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: sd-apps-bench
+          path: build/aarch64/
 
       - name: Collect dist
         run: |
@@ -180,7 +202,7 @@ jobs:
           path: dist/
 
   release:
-    needs: build
+    needs: [build, sd-apps-tests]
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     permissions:

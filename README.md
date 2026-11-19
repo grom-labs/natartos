@@ -42,10 +42,23 @@ See [SECURITY.md](SECURITY.md) for the trust model.
 | `mute` | Audio Control | tweak | no | untested |
 | `input` | Key Injection | hook | no | experimental |
 | `splash` | Custom Splash | theme | no | in progress |
+| `sd_apps` | SD Apps | app | no | in progress |
 
 Mods are opt-in — you choose which to install. Each mod is a standalone `.so`
 loaded by the loader. To write your own, see [MOD_SPEC.md](MOD_SPEC.md) and the
 starter [mods/template](mods/template).
+
+### SD-card applications (development preview)
+
+The optional SD Apps mod adds a More-menu entry for each static ARM64 app in
+`natartos/apps` on the card. A standalone runner validates packages, stages a
+verified internal copy, keeps saves separate, and supervises app/display exit.
+The graphical Hello example and its controls were bench-tested from the SD
+card on retail build 35808. The runner and updated overlay must be installed
+together; build and manual setup are in the [runner guide](docs/SD_APP_RUNNER.md).
+SD artifacts are built separately from release packaging, and the default
+Toolya installer does not yet include them. An active Natartos session is
+required; automatic boot activation is independent of this feature.
 
 ### Menu architecture
 
@@ -123,6 +136,12 @@ cd src && make                   # builds natartos_loader.so
 
 ## Documentation
 
+- [SD app runner](docs/SD_APP_RUNNER.md) — build, test, and bench commands for
+  the SD launcher: per-app menu entries, the display/input contract for apps,
+  and the graphical Hello example (SD/menu launch and display guards bench-tested;
+  see the dated bench reports for results and remaining checks).
+- [SD card application launcher plan](docs/SD_APP_LAUNCHER_PLAN.md) — scope,
+  package format, design goals and remaining installation work.
 - [MOD_SPEC.md](MOD_SPEC.md) — mod descriptor and how to write a mod
 - [mods/template](mods/template) — starter template for your own mod
 - [mods/menu/RE_MENU.md](mods/menu/RE_MENU.md) — menu injection reverse-engineering notes

@@ -25,6 +25,7 @@ extern void *dlsym(void *handle, const char *symbol);
 typedef void (*reload_fn)(void *self);
 typedef void (*add_item_fn)(void *self, void *itemdata);
 typedef void (*set_noi_fn)(void *, int);
+typedef void (*postreload_fn)(void *self);
 typedef void *(*new_str_fn)(const char *ascii);
 typedef int (*system_fn)(const char *cmd);
 
@@ -42,6 +43,7 @@ static reload_fn g_orig_reload = 0;
 static void *g_more_menu_vmt = 0;
 static add_item_fn g_add_item_from_data = 0;
 static set_noi_fn g_set_noi = 0;
+static postreload_fn g_postreload = 0;
 static new_str_fn g_new_str = 0;
 static system_fn g_system = 0;
 static create_bmp_fn g_create_bmp = 0;
@@ -119,12 +121,8 @@ static void sort_slots(void) {
 
 int natartos_menu_register(const natartos_menu_entry *entry) {
     if (!entry || !entry->id || !entry->name) return -1;
-    if (g_slot_count >= NATARTOS_MAX_MENU_ITEMS) {
-        NTLOG("menu_register: full");
-        return -2;
-    }
 
-    /* Update existing entry with same id */
+    /* Update existing entry with same id (allowed even when every slot is used) */
     for (int i = 0; i < g_slot_count; i++) {
         if (natartos_strncmp(g_slots[i].id, entry->id, MAX_STR) == 0) {
             str_copy(g_slots[i].name, entry->name, MAX_STR);
@@ -138,6 +136,12 @@ int natartos_menu_register(const natartos_menu_entry *entry) {
             NTLOG(entry->id);
             return 0;
         }
+    }
+
+    if (g_slot_count >= NATARTOS_MAX_MENU_ITEMS) {
+        NTLOG("menu_register: full");
+        NTLOG(entry->id);
+        return -2;
     }
 
     menu_slot *s = &g_slots[g_slot_count];
@@ -263,12 +267,18 @@ static void *build_icon(const char *file, int w, int h,
 
 /* ── Action dispatch ── */
 
+/* Runs on the UI thread: commands must background themselves (`... &`).
+ * `on_action` is the documented alternative when no command is given. */
 static void menu_action_handler(void *obj) {
     menu_slot *s = (menu_slot *)obj;
-    if (!s || !s->command[0]) return;
+    if (!s) return;
     NTLOG("action:");
     NTLOG(s->id);
-    if (g_system) g_system(s->command);
+    if (s->command[0]) {
+        if (g_system) g_system(s->command);
+    } else if (s->on_action) {
+        s->on_action();
+    }
 }
 
 /* ── Inject registered items into menu ── */
@@ -338,8 +348,13 @@ static void inject_items(void *self, void *menudata) {
     }
 
     if (g_set_noi) g_set_noi(self, 0);
-    void **vmt = (void **)g_more_menu_vmt;
-    ((void (*)(void *))vmt[58])(self);
+    /* Finish the way the stock MxBindableAbstractMenu_Reload does after adding
+     * its own items: call Postreload through EW's virtual dispatcher, which
+     * reads the right vtable slot for the running firmware. The old hard-coded
+     * vmt[58] is MxBindableMenu_DoPreFocus(self, view) on build 35808; called
+     * without a view it read a leftover register and crashed in
+     * ViewsImage_OnGetVisible (GCC builds happened to pass a harmless value). */
+    if (g_postreload) g_postreload(self);
     NTLOG_INT("inject: done, items=", g_slot_count);
 }
 
@@ -376,6 +391,9 @@ int natartos_mod_init(void *(*loader_dlsym)(void *, const char *)) {
         "MxBindableAbstractMenu_AddItemFromData");
     g_set_noi = (set_noi_fn)loader_dlsym(RTLD_DEFAULT,
         "CoreVerticalList_OnSetNoOfItems");
+    g_postreload = (postreload_fn)loader_dlsym(RTLD_DEFAULT,
+        "MxBindableAbstractMenu__Postreload");
+    NTLOG_HEX("postreload=", (unsigned long)g_postreload);
     g_new_str = (new_str_fn)loader_dlsym(RTLD_DEFAULT,
         "EwNewStringAnsi");
     g_system = (system_fn)loader_dlsym(RTLD_DEFAULT, "system");
